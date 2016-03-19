@@ -1,8 +1,7 @@
 CXX=clang++
 PROTOBUF_DIR=google_protobuf
-CFLAGS=-fno-rtti -fno-exceptions -Wall -Wno-unused-parameter -std=c++11 -O2
+CFLAGS=-fno-rtti -fno-exceptions -Wall -Wno-unused-parameter -fPIC -std=c++11 -O2
 CFLAGS+=-DNDEBUG -DGOOGLE_PROTOBUF_NO_RTTI -DHAVE_PTHREAD
-
 
 all: out/main_proto out/main_me
 
@@ -17,6 +16,7 @@ out/protoc: $(PROTOBUF_DIR) | out/
 
 out/libprotobuf-lite.o: out/protoc Makefile
 	$(CXX) $(CFLAGS) -I$(PROTOBUF_DIR)/src/.. -I$(PROTOBUF_DIR)/src -shared -o $@ \
+		$(PROTOBUF_DIR)/src/google/protobuf/stubs/atomicops_internals_x86_gcc.cc \
 		$(PROTOBUF_DIR)/src/google/protobuf/stubs/common.cc \
 		$(PROTOBUF_DIR)/src/google/protobuf/stubs/once.cc \
 		$(PROTOBUF_DIR)/src/google/protobuf/generated_message_util.cc \

@@ -1,8 +1,9 @@
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <string>
-
+#include <string.h>
 #include <time.h>
+#include <string>
 
 #ifdef USE_PROTO
 #include "google/protobuf/io/zero_copy_stream_impl_lite.h"
@@ -134,7 +135,7 @@ int main(int argc, char** argv) {
     uint64_t csum = 0;
     for (size_t i = 0; i < size; i += sizeof(uint64_t))
       csum += (csum << 11) ^ *(uint64_t*)(buf + i);
-    printf("Checksum: %llX\n", csum);
+    printf("Checksum: %" PRIx64 "\n", csum);
   }
   printf("Run-time (us): %lu\n", (t_end - t_start) * 1000000 / CLOCKS_PER_SEC);
   return 0;

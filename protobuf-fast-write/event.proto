@@ -1,0 +1,12 @@
+syntax = "proto2";
+
+option optimize_for = LITE_RUNTIME;
+
+message Event {
+  required int32 id = 1;
+  required int64 timestamp = 2;
+  required int64 thread_timestamp = 3;
+  required string category = 4;
+  required string name = 5;
+  repeated string args = 6;
+}

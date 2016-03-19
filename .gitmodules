@@ -1,0 +1,3 @@
+[submodule "google_protobuf"]
+	path = protobuf-fast-write/google_protobuf
+	url = https://github.com/google/protobuf.git

@@ -13,9 +13,11 @@ gen/:
 	mkdir -p $@
 
 out/protoc out/$(LIBPROTOBUF): $(PROTOBUF_DIR) | out/
-	git -C $(PROTOBUF_DIR) clean -dxf
-	(cd $(PROTOBUF_DIR); ./autogen.sh && ./configure && make --quiet -j)
+	# git -C $(PROTOBUF_DIR) clean -dxf
+	# (cd $(PROTOBUF_DIR); ./autogen.sh && ./configure && make --quiet -j)
+	mkdir -p $(PROTOBUF_DIR)/.libs
 	@cp $(PROTOBUF_DIR)/src/protoc out/protoc
+	@cp -r $(PROTOBUF_DIR)/src/.libs/ out/
 	@cp $(PROTOBUF_DIR)/src/.libs/$(LIBPROTOBUF) out/$(LIBPROTOBUF)
 
 gen/event.pb.cc: event.proto out/protoc | gen/

@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TracingServiceImpl Call Graph</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        h1 {
+            text-align: center;
+            color: #00d4ff;
+        }
+        .controls {
+            text-align: center;
+            margin: 20px 0;
+            position: sticky;
+            top: 0;
+            background: #1a1a2e;
+            padding: 10px;
+            z-index: 100;
+        }
+        button {
+            background: #00d4ff;
+            color: #1a1a2e;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        button:hover {
+            background: #00a8cc;
+        }
+        button.active {
+            background: #ff6b6b;
+        }
+        .diagram-container {
+            overflow: auto;
+            background: #16213e;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .legend {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+        }
+        .stats {
+            background: #16213e;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px auto;
+            max-width: 600px;
+        }
+        .hidden { display: none !important; }
+        #search {
+            padding: 10px;
+            width: 300px;
+            border-radius: 5px;
+            border: 1px solid #00d4ff;
+            background: #16213e;
+            color: #eee;
+        }
+        .diagram-wrapper {
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <h1>TracingServiceImpl Internal Call Graph</h1>
+
+    <div class="controls">
+        <input type="text" id="search" placeholder="Search function name..." oninput="filterDiagram()">
+        <br><br>
+        <button onclick="showView('full')" id="btn-full" class="active">Full Graph</button>
+        <button onclick="showView('tracing')" id="btn-tracing">Tracing Flow</button>
+        <button onclick="showView('flush')" id="btn-flush">Flush/Clone Flow</button>
+        <button onclick="showView('data-source')" id="btn-data-source">DataSource Flow</button>
+        <button onclick="showView('triggers')" id="btn-triggers">Triggers Flow</button>
+    </div>
+
+    <div class="legend">
+        <div class="legend-item">
+            <div class="legend-color" style="background: #ff6b6b;"></div>
+            <span>Entry Points</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #4ecdc4;"></div>
+            <span>Core Functions</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #95e1d3;"></div>
+            <span>Helper/Leaf Functions</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #f38181;"></div>
+            <span>Snapshot/Emit Functions</span>
+        </div>
+    </div>
+
+    <div class="diagram-container" id="container-full">
+        <div class="diagram-wrapper" id="diagram-full"></div>
+    </div>
+
+    <div class="diagram-container hidden" id="container-tracing">
+        <div class="diagram-wrapper" id="diagram-tracing"></div>
+    </div>
+
+    <div class="diagram-container hidden" id="container-flush">
+        <div class="diagram-wrapper" id="diagram-flush"></div>
+    </div>
+
+    <div class="diagram-container hidden" id="container-data-source">
+        <div class="diagram-wrapper" id="diagram-data-source"></div>
+    </div>
+
+    <div class="diagram-container hidden" id="container-triggers">
+        <div class="diagram-wrapper" id="diagram-triggers"></div>
+    </div>
+
+    <div class="stats">
+        <h3>Statistics</h3>
+        <ul>
+            <li><strong>Total functions:</strong> 71</li>
+            <li><strong>Functions with internal calls:</strong> 48</li>
+            <li><strong>Leaf functions (no internal calls):</strong> 23</li>
+            <li><strong>Most connected functions:</strong>
+                <ul>
+                    <li>ReadBuffers (14 outgoing calls)</li>
+                    <li>StartTracing (13 outgoing calls)</li>
+                    <li>ReadBuffersIntoFile (7 outgoing calls)</li>
+                    <li>GetTracingSession (most called helper)</li>
+                    <li>GetProducer (second most called helper)</li>
+                </ul>
+            </li>
+        </ul>
+    </div>
+
+    <script>
+        const diagrams = {
+            full: `flowchart TB
+    subgraph EntryPoints["Entry Points - Consumer/Producer API"]
+        EnableTracing["EnableTracing"]
+        DisableTracing["DisableTracing"]
+        Flush["Flush"]
+        FreeBuffers["FreeBuffers"]
+        ReadBuffersIntoConsumer["ReadBuffersIntoConsumer"]
+        AttachConsumer["AttachConsumer"]
+        DetachConsumer["DetachConsumer"]
+        DisconnectConsumer["DisconnectConsumer"]
+        DisconnectProducer["DisconnectProducer"]
+        RegisterDataSource["RegisterDataSource"]
+        UnregisterDataSource["UnregisterDataSource"]
+        NotifyDataSourceStarted["NotifyDataSourceStarted"]
+        NotifyDataSourceStopped["NotifyDataSourceStopped"]
+        NotifyFlushDoneForProducer["NotifyFlushDoneForProducer"]
+        ActivateTriggers["ActivateTriggers"]
+        ChangeTraceConfig["ChangeTraceConfig"]
+        FlushAndCloneSession["FlushAndCloneSession"]
+    end
+
+    subgraph CoreFunctions["Core Functions"]
+        StartTracing["StartTracing"]
+        DisableTracingNotifyConsumerAndFlushFile["DisableTracingNotify..."]
+        FlushAndDisableTracing["FlushAndDisableTracing"]
+        FlushDataSourceInstances["FlushDataSourceInstances"]
+        CompleteFlush["CompleteFlush"]
+        ReadBuffers["ReadBuffers"]
+        ReadBuffersIntoFile["ReadBuffersIntoFile"]
+        SetupDataSource["SetupDataSource"]
+        StartDataSourceInstance["StartDataSourceInstance"]
+        StopDataSourceInstance["StopDataSourceInstance"]
+        ScrapeSharedMemoryBuffers["ScrapeSharedMemory..."]
+        CopyProducerPageIntoLogBuffer["CopyProducerPage..."]
+        DoCloneBuffers["DoCloneBuffers"]
+        FinishCloneSession["FinishCloneSession"]
+        OnFlushDoneForClone["OnFlushDoneForClone"]
+    end
+
+    subgraph Helpers["Helper Functions"]
+        GetTracingSession["GetTracingSession"]
+        GetProducer["GetProducer"]
+        GetBufferByID["GetBufferByID"]
+        GetDetachedSession["GetDetachedSession"]
+        GetTracingSessionByUniqueName["GetTracingSession...ByName"]
+        FindTracingSessionWithMaxBugreportScore["FindSession...MaxScore"]
+        IsInitiatorPrivileged["IsInitiatorPrivileged"]
+        IsWaitingForTrigger["IsWaitingForTrigger"]
+        UpdateMemoryGuardrail["UpdateMemoryGuardrail"]
+        PurgeExpiredAndCountTriggerInWindow["PurgeExpired...Trigger"]
+        DelayToNextWritePeriodMs["DelayToNextWritePeriod"]
+        GetTraceStats["GetTraceStats"]
+    end
+
+    subgraph Snapshots["Snapshot and Emit Functions"]
+        SnapshotLifecycleEvent["SnapshotLifecycleEvent"]
+        SnapshotClocks["SnapshotClocks"]
+        MaybeSnapshotClocksIntoRingBuffer["MaybeSnapshotClocks..."]
+        EmitClockSnapshot["EmitClockSnapshot"]
+        EmitLifecycleEvents["EmitLifecycleEvents"]
+        EmitStats["EmitStats"]
+        EmitSyncMarker["EmitSyncMarker"]
+        EmitSystemInfo["EmitSystemInfo"]
+        EmitUuid["EmitUuid"]
+        MaybeEmitTraceConfig["MaybeEmitTraceConfig"]
+        MaybeEmitCloneTrigger["MaybeEmitCloneTrigger"]
+        MaybeEmitReceivedTriggers["MaybeEmitReceivedTriggers"]
+        MaybeEmitRemoteClockSync["MaybeEmitRemoteClockSync"]
+        MaybeEmitRemoteSystemInfo["MaybeEmitRemoteSystemInfo"]
+        MaybeCompressPackets["MaybeCompressPackets"]
+        MaybeFilterPackets["MaybeFilterPackets"]
+        SetSingleLifecycleEvent["SetSingleLifecycleEvent"]
+    end
+
+    subgraph Callbacks["Timeout and Periodic Callbacks"]
+        OnDisableTracingTimeout["OnDisableTracingTimeout"]
+        OnFlushTimeout["OnFlushTimeout"]
+        OnStartTriggersTimeout["OnStartTriggersTimeout"]
+        OnAllDataSourceStartedTimeout["OnAllDataSourceStartedTimeout"]
+        PeriodicFlushTask["PeriodicFlushTask"]
+        PeriodicSnapshotTask["PeriodicSnapshotTask"]
+        PeriodicClearIncrementalStateTask["PeriodicClearIncremental..."]
+        StopOnDurationMsExpiry["StopOnDurationMsExpiry"]
+        MaybeNotifyAllDataSourcesStarted["MaybeNotifyAllDS...Started"]
+    end
+
+    subgraph Logging["Logging Functions"]
+        MaybeLogTriggerEvent["MaybeLogTriggerEvent"]
+        MaybeLogUploadEvent["MaybeLogUploadEvent"]
+        WriteIntoFile["WriteIntoFile"]
+    end
+
+    EnableTracing --> FreeBuffers
+    EnableTracing --> GetProducer
+    EnableTracing --> GetTracingSession
+    EnableTracing --> MaybeLogUploadEvent
+    EnableTracing --> OnStartTriggersTimeout
+    EnableTracing --> SetupDataSource
+    EnableTracing --> StartTracing
+    EnableTracing --> UpdateMemoryGuardrail
+
+    StartTracing --> DelayToNextWritePeriodMs
+    StartTracing --> GetProducer
+    StartTracing --> GetTracingSession
+    StartTracing --> MaybeLogUploadEvent
+    StartTracing --> MaybeNotifyAllDataSourcesStarted
+    StartTracing --> OnAllDataSourceStartedTimeout
+    StartTracing --> PeriodicClearIncrementalStateTask
+    StartTracing --> PeriodicFlushTask
+    StartTracing --> PeriodicSnapshotTask
+    StartTracing --> ReadBuffersIntoFile
+    StartTracing --> SnapshotClocks
+    StartTracing --> SnapshotLifecycleEvent
+    StartTracing --> StartDataSourceInstance
+
+    DisableTracing --> DisableTracingNotifyConsumerAndFlushFile
+    DisableTracing --> GetProducer
+    DisableTracing --> GetTracingSession
+    DisableTracing --> MaybeLogUploadEvent
+    DisableTracing --> OnDisableTracingTimeout
+    DisableTracing --> StopDataSourceInstance
+
+    DisableTracingNotifyConsumerAndFlushFile --> GetProducer
+    DisableTracingNotifyConsumerAndFlushFile --> MaybeLogUploadEvent
+    DisableTracingNotifyConsumerAndFlushFile --> ReadBuffersIntoFile
+    DisableTracingNotifyConsumerAndFlushFile --> ScrapeSharedMemoryBuffers
+    DisableTracingNotifyConsumerAndFlushFile --> SnapshotLifecycleEvent
+
+    Flush --> FlushDataSourceInstances
+    Flush --> GetTracingSession
+    Flush --> SnapshotLifecycleEvent
+
+    FlushDataSourceInstances --> Flush
+    FlushDataSourceInstances --> GetProducer
+    FlushDataSourceInstances --> OnFlushTimeout
+
+    CompleteFlush --> GetTracingSession
+    CompleteFlush --> ScrapeSharedMemoryBuffers
+    CompleteFlush --> SnapshotLifecycleEvent
+
+    FreeBuffers --> DisableTracing
+    FreeBuffers --> GetTracingSession
+    FreeBuffers --> UpdateMemoryGuardrail
+
+    ReadBuffersIntoConsumer --> GetTracingSession
+    ReadBuffersIntoConsumer --> IsWaitingForTrigger
+    ReadBuffersIntoConsumer --> ReadBuffers
+
+    ReadBuffersIntoFile --> DelayToNextWritePeriodMs
+    ReadBuffersIntoFile --> DisableTracing
+    ReadBuffersIntoFile --> Flush
+    ReadBuffersIntoFile --> GetTracingSession
+    ReadBuffersIntoFile --> IsWaitingForTrigger
+    ReadBuffersIntoFile --> ReadBuffers
+    ReadBuffersIntoFile --> WriteIntoFile
+
+    ReadBuffers --> EmitClockSnapshot
+    ReadBuffers --> EmitLifecycleEvents
+    ReadBuffers --> EmitStats
+    ReadBuffers --> EmitSyncMarker
+    ReadBuffers --> EmitSystemInfo
+    ReadBuffers --> EmitUuid
+    ReadBuffers --> MaybeCompressPackets
+    ReadBuffers --> MaybeEmitCloneTrigger
+    ReadBuffers --> MaybeEmitReceivedTriggers
+    ReadBuffers --> MaybeEmitRemoteClockSync
+    ReadBuffers --> MaybeEmitRemoteSystemInfo
+    ReadBuffers --> MaybeEmitTraceConfig
+    ReadBuffers --> MaybeFilterPackets
+    ReadBuffers --> SnapshotLifecycleEvent
+
+    FlushAndCloneSession --> FindTracingSessionWithMaxBugreportScore
+    FlushAndCloneSession --> FlushDataSourceInstances
+    FlushAndCloneSession --> GetTracingSession
+    FlushAndCloneSession --> GetTracingSessionByUniqueName
+    FlushAndCloneSession --> OnFlushDoneForClone
+    FlushAndCloneSession --> SnapshotLifecycleEvent
+
+    OnFlushDoneForClone --> DoCloneBuffers
+    OnFlushDoneForClone --> FinishCloneSession
+    OnFlushDoneForClone --> GetTracingSession
+    OnFlushDoneForClone --> UpdateMemoryGuardrail
+
+    FinishCloneSession --> GetTracingSession
+    FinishCloneSession --> ReadBuffersIntoFile
+    FinishCloneSession --> SetSingleLifecycleEvent
+    FinishCloneSession --> SnapshotLifecycleEvent
+    FinishCloneSession --> UpdateMemoryGuardrail
+
+    RegisterDataSource --> GetProducer
+    RegisterDataSource --> SetupDataSource
+    RegisterDataSource --> StartDataSourceInstance
+
+    UnregisterDataSource --> GetProducer
+    UnregisterDataSource --> MaybeNotifyAllDataSourcesStarted
+    UnregisterDataSource --> NotifyDataSourceStopped
+    UnregisterDataSource --> StopDataSourceInstance
+
+    SetupDataSource --> GetProducer
+    SetupDataSource --> IsInitiatorPrivileged
+
+    StartDataSourceInstance --> MaybeNotifyAllDataSourcesStarted
+
+    NotifyDataSourceStarted --> GetProducer
+    NotifyDataSourceStarted --> MaybeNotifyAllDataSourcesStarted
+
+    NotifyDataSourceStopped --> DisableTracingNotifyConsumerAndFlushFile
+    NotifyDataSourceStopped --> GetProducer
+
+    NotifyFlushDoneForProducer --> CompleteFlush
+
+    ActivateTriggers --> FlushAndDisableTracing
+    ActivateTriggers --> GetProducer
+    ActivateTriggers --> GetTracingSession
+    ActivateTriggers --> MaybeLogTriggerEvent
+    ActivateTriggers --> MaybeLogUploadEvent
+    ActivateTriggers --> MaybeSnapshotClocksIntoRingBuffer
+    ActivateTriggers --> PurgeExpiredAndCountTriggerInWindow
+    ActivateTriggers --> StartTracing
+
+    FlushAndDisableTracing --> DisableTracing
+    FlushAndDisableTracing --> Flush
+    FlushAndDisableTracing --> FreeBuffers
+    FlushAndDisableTracing --> GetTracingSession
+
+    OnDisableTracingTimeout --> DisableTracingNotifyConsumerAndFlushFile
+    OnDisableTracingTimeout --> GetTracingSession
+
+    OnFlushTimeout --> CompleteFlush
+    OnFlushTimeout --> GetProducer
+    OnFlushTimeout --> GetTracingSession
+
+    OnStartTriggersTimeout --> DisableTracing
+    OnStartTriggersTimeout --> GetTracingSession
+
+    OnAllDataSourceStartedTimeout --> GetProducer
+    OnAllDataSourceStartedTimeout --> GetTracingSession
+
+    PeriodicFlushTask --> Flush
+    PeriodicFlushTask --> GetTracingSession
+
+    PeriodicSnapshotTask --> GetTracingSession
+    PeriodicSnapshotTask --> MaybeSnapshotClocksIntoRingBuffer
+
+    PeriodicClearIncrementalStateTask --> GetProducer
+    PeriodicClearIncrementalStateTask --> GetTracingSession
+
+    StopOnDurationMsExpiry --> FlushAndDisableTracing
+    StopOnDurationMsExpiry --> GetTracingSession
+
+    ChangeTraceConfig --> GetProducer
+    ChangeTraceConfig --> GetTracingSession
+    ChangeTraceConfig --> SetupDataSource
+    ChangeTraceConfig --> StartDataSourceInstance
+
+    AttachConsumer --> GetDetachedSession
+    DetachConsumer --> GetDetachedSession
+    DetachConsumer --> GetTracingSession
+
+    DisconnectConsumer --> FreeBuffers
+
+    DisconnectProducer --> GetProducer
+    DisconnectProducer --> ScrapeSharedMemoryBuffers
+    DisconnectProducer --> UnregisterDataSource
+    DisconnectProducer --> UpdateMemoryGuardrail
+
+    ScrapeSharedMemoryBuffers --> CopyProducerPageIntoLogBuffer
+    CopyProducerPageIntoLogBuffer --> GetBufferByID
+    CopyProducerPageIntoLogBuffer --> GetProducer
+
+    SnapshotLifecycleEvent --> MaybeSnapshotClocksIntoRingBuffer
+    MaybeSnapshotClocksIntoRingBuffer --> SnapshotClocks
+
+    MaybeNotifyAllDataSourcesStarted --> SnapshotLifecycleEvent
+
+    EmitStats --> GetTraceStats
+    GetTraceStats --> GetBufferByID
+
+    classDef entry fill:#ff6b6b,stroke:#c0392b,color:#000
+    classDef core fill:#4ecdc4,stroke:#1abc9c,color:#000
+    classDef helper fill:#95e1d3,stroke:#27ae60,color:#000
+    classDef snapshot fill:#f38181,stroke:#e74c3c,color:#000
+    classDef callback fill:#aa96da,stroke:#9b59b6,color:#000
+    classDef logging fill:#fcbad3,stroke:#e91e63,color:#000
+
+    class EnableTracing,DisableTracing,Flush,FreeBuffers,ReadBuffersIntoConsumer,AttachConsumer,DetachConsumer,DisconnectConsumer,DisconnectProducer,RegisterDataSource,UnregisterDataSource,NotifyDataSourceStarted,NotifyDataSourceStopped,NotifyFlushDoneForProducer,ActivateTriggers,ChangeTraceConfig,FlushAndCloneSession entry
+    class StartTracing,DisableTracingNotifyConsumerAndFlushFile,FlushAndDisableTracing,FlushDataSourceInstances,CompleteFlush,ReadBuffers,ReadBuffersIntoFile,SetupDataSource,StartDataSourceInstance,StopDataSourceInstance,ScrapeSharedMemoryBuffers,CopyProducerPageIntoLogBuffer,DoCloneBuffers,FinishCloneSession,OnFlushDoneForClone core
+    class GetTracingSession,GetProducer,GetBufferByID,GetDetachedSession,GetTracingSessionByUniqueName,FindTracingSessionWithMaxBugreportScore,IsInitiatorPrivileged,IsWaitingForTrigger,UpdateMemoryGuardrail,PurgeExpiredAndCountTriggerInWindow,DelayToNextWritePeriodMs,GetTraceStats helper
+    class SnapshotLifecycleEvent,SnapshotClocks,MaybeSnapshotClocksIntoRingBuffer,EmitClockSnapshot,EmitLifecycleEvents,EmitStats,EmitSyncMarker,EmitSystemInfo,EmitUuid,MaybeEmitTraceConfig,MaybeEmitCloneTrigger,MaybeEmitReceivedTriggers,MaybeEmitRemoteClockSync,MaybeEmitRemoteSystemInfo,MaybeCompressPackets,MaybeFilterPackets,SetSingleLifecycleEvent snapshot
+    class OnDisableTracingTimeout,OnFlushTimeout,OnStartTriggersTimeout,OnAllDataSourceStartedTimeout,PeriodicFlushTask,PeriodicSnapshotTask,PeriodicClearIncrementalStateTask,StopOnDurationMsExpiry,MaybeNotifyAllDataSourcesStarted callback
+    class MaybeLogTriggerEvent,MaybeLogUploadEvent,WriteIntoFile logging`,
+
+            tracing: `flowchart TB
+    subgraph TracingLifecycle["Tracing Lifecycle Flow"]
+        EnableTracing["EnableTracing<br/>entry"]
+        StartTracing["StartTracing"]
+        DisableTracing["DisableTracing<br/>entry"]
+        DisableTracingNotify["DisableTracingNotify..."]
+        FreeBuffers["FreeBuffers<br/>entry"]
+    end
+
+    subgraph Reading["Reading Trace Data"]
+        ReadBuffersIntoConsumer["ReadBuffersIntoConsumer"]
+        ReadBuffersIntoFile["ReadBuffersIntoFile"]
+        ReadBuffers["ReadBuffers"]
+    end
+
+    subgraph Helpers["Helpers"]
+        GetTracingSession["GetTracingSession"]
+        GetProducer["GetProducer"]
+        UpdateMemoryGuardrail["UpdateMemoryGuardrail"]
+    end
+
+    EnableTracing --> FreeBuffers
+    EnableTracing --> StartTracing
+    EnableTracing --> GetTracingSession
+    EnableTracing --> GetProducer
+    EnableTracing --> UpdateMemoryGuardrail
+
+    StartTracing --> GetTracingSession
+    StartTracing --> GetProducer
+    StartTracing --> ReadBuffersIntoFile
+
+    DisableTracing --> DisableTracingNotify
+    DisableTracing --> GetTracingSession
+    DisableTracing --> GetProducer
+
+    DisableTracingNotify --> ReadBuffersIntoFile
+    DisableTracingNotify --> GetProducer
+
+    FreeBuffers --> DisableTracing
+    FreeBuffers --> GetTracingSession
+    FreeBuffers --> UpdateMemoryGuardrail
+
+    ReadBuffersIntoConsumer --> ReadBuffers
+    ReadBuffersIntoConsumer --> GetTracingSession
+
+    ReadBuffersIntoFile --> ReadBuffers
+    ReadBuffersIntoFile --> DisableTracing
+    ReadBuffersIntoFile --> GetTracingSession
+
+    classDef entry fill:#ff6b6b,stroke:#c0392b,color:#000
+    classDef core fill:#4ecdc4,stroke:#1abc9c,color:#000
+    classDef helper fill:#95e1d3,stroke:#27ae60,color:#000
+
+    class EnableTracing,DisableTracing,FreeBuffers,ReadBuffersIntoConsumer entry
+    class StartTracing,DisableTracingNotify,ReadBuffersIntoFile,ReadBuffers core
+    class GetTracingSession,GetProducer,UpdateMemoryGuardrail helper`,
+
+            flush: `flowchart TB
+    subgraph FlushEntry["Flush Entry Points"]
+        Flush["Flush<br/>entry"]
+        FlushAndCloneSession["FlushAndCloneSession<br/>entry"]
+        FlushAndDisableTracing["FlushAndDisableTracing"]
+    end
+
+    subgraph FlushCore["Flush Core"]
+        FlushDataSourceInstances["FlushDataSourceInstances"]
+        CompleteFlush["CompleteFlush"]
+        NotifyFlushDoneForProducer["NotifyFlushDoneForProducer<br/>entry"]
+        OnFlushTimeout["OnFlushTimeout"]
+    end
+
+    subgraph CloneFlow["Clone Flow"]
+        OnFlushDoneForClone["OnFlushDoneForClone"]
+        DoCloneBuffers["DoCloneBuffers"]
+        FinishCloneSession["FinishCloneSession"]
+    end
+
+    subgraph Helpers["Helpers"]
+        GetTracingSession["GetTracingSession"]
+        GetProducer["GetProducer"]
+        ScrapeSharedMemoryBuffers["ScrapeSharedMemory..."]
+        SnapshotLifecycleEvent["SnapshotLifecycleEvent"]
+    end
+
+    Flush --> FlushDataSourceInstances
+    Flush --> GetTracingSession
+    Flush --> SnapshotLifecycleEvent
+
+    FlushDataSourceInstances --> Flush
+    FlushDataSourceInstances --> GetProducer
+    FlushDataSourceInstances --> OnFlushTimeout
+
+    NotifyFlushDoneForProducer --> CompleteFlush
+
+    CompleteFlush --> GetTracingSession
+    CompleteFlush --> ScrapeSharedMemoryBuffers
+    CompleteFlush --> SnapshotLifecycleEvent
+
+    OnFlushTimeout --> CompleteFlush
+    OnFlushTimeout --> GetProducer
+    OnFlushTimeout --> GetTracingSession
+
+    FlushAndCloneSession --> FlushDataSourceInstances
+    FlushAndCloneSession --> GetTracingSession
+    FlushAndCloneSession --> OnFlushDoneForClone
+    FlushAndCloneSession --> SnapshotLifecycleEvent
+
+    OnFlushDoneForClone --> DoCloneBuffers
+    OnFlushDoneForClone --> FinishCloneSession
+    OnFlushDoneForClone --> GetTracingSession
+
+    FinishCloneSession --> GetTracingSession
+    FinishCloneSession --> SnapshotLifecycleEvent
+
+    FlushAndDisableTracing --> Flush
+
+    classDef entry fill:#ff6b6b,stroke:#c0392b,color:#000
+    classDef core fill:#4ecdc4,stroke:#1abc9c,color:#000
+    classDef helper fill:#95e1d3,stroke:#27ae60,color:#000
+    classDef clone fill:#aa96da,stroke:#9b59b6,color:#000
+
+    class Flush,FlushAndCloneSession,NotifyFlushDoneForProducer entry
+    class FlushDataSourceInstances,CompleteFlush,OnFlushTimeout,FlushAndDisableTracing core
+    class GetTracingSession,GetProducer,ScrapeSharedMemoryBuffers,SnapshotLifecycleEvent helper
+    class OnFlushDoneForClone,DoCloneBuffers,FinishCloneSession clone`,
+
+            'data-source': `flowchart TB
+    subgraph DSEntry["DataSource Entry Points"]
+        RegisterDataSource["RegisterDataSource<br/>entry"]
+        UnregisterDataSource["UnregisterDataSource<br/>entry"]
+        NotifyDataSourceStarted["NotifyDataSourceStarted<br/>entry"]
+        NotifyDataSourceStopped["NotifyDataSourceStopped<br/>entry"]
+    end
+
+    subgraph DSCore["DataSource Core"]
+        SetupDataSource["SetupDataSource"]
+        StartDataSourceInstance["StartDataSourceInstance"]
+        StopDataSourceInstance["StopDataSourceInstance"]
+        MaybeNotifyAllDataSourcesStarted["MaybeNotifyAllDS...Started"]
+    end
+
+    subgraph Helpers["Helpers"]
+        GetProducer["GetProducer"]
+        IsInitiatorPrivileged["IsInitiatorPrivileged"]
+        SnapshotLifecycleEvent["SnapshotLifecycleEvent"]
+    end
+
+    RegisterDataSource --> GetProducer
+    RegisterDataSource --> SetupDataSource
+    RegisterDataSource --> StartDataSourceInstance
+
+    SetupDataSource --> GetProducer
+    SetupDataSource --> IsInitiatorPrivileged
+
+    StartDataSourceInstance --> MaybeNotifyAllDataSourcesStarted
+
+    UnregisterDataSource --> GetProducer
+    UnregisterDataSource --> MaybeNotifyAllDataSourcesStarted
+    UnregisterDataSource --> NotifyDataSourceStopped
+    UnregisterDataSource --> StopDataSourceInstance
+
+    NotifyDataSourceStarted --> GetProducer
+    NotifyDataSourceStarted --> MaybeNotifyAllDataSourcesStarted
+
+    NotifyDataSourceStopped --> GetProducer
+
+    MaybeNotifyAllDataSourcesStarted --> SnapshotLifecycleEvent
+
+    classDef entry fill:#ff6b6b,stroke:#c0392b,color:#000
+    classDef core fill:#4ecdc4,stroke:#1abc9c,color:#000
+    classDef helper fill:#95e1d3,stroke:#27ae60,color:#000
+
+    class RegisterDataSource,UnregisterDataSource,NotifyDataSourceStarted,NotifyDataSourceStopped entry
+    class SetupDataSource,StartDataSourceInstance,StopDataSourceInstance,MaybeNotifyAllDataSourcesStarted core
+    class GetProducer,IsInitiatorPrivileged,SnapshotLifecycleEvent helper`,
+
+            triggers: `flowchart TB
+    subgraph TriggerEntry["Trigger Entry"]
+        ActivateTriggers["ActivateTriggers<br/>entry"]
+    end
+
+    subgraph TriggerActions["Trigger Actions"]
+        StartTracing["StartTracing"]
+        FlushAndDisableTracing["FlushAndDisableTracing"]
+        DisableTracing["DisableTracing"]
+        Flush["Flush"]
+        FreeBuffers["FreeBuffers"]
+    end
+
+    subgraph Timeouts["Timeout Handlers"]
+        OnStartTriggersTimeout["OnStartTriggersTimeout"]
+        StopOnDurationMsExpiry["StopOnDurationMsExpiry"]
+    end
+
+    subgraph Helpers["Helpers"]
+        GetTracingSession["GetTracingSession"]
+        GetProducer["GetProducer"]
+        PurgeExpiredAndCountTriggerInWindow["PurgeExpired...Trigger"]
+        MaybeSnapshotClocksIntoRingBuffer["MaybeSnapshotClocks..."]
+        MaybeLogTriggerEvent["MaybeLogTriggerEvent"]
+        MaybeLogUploadEvent["MaybeLogUploadEvent"]
+    end
+
+    ActivateTriggers --> FlushAndDisableTracing
+    ActivateTriggers --> GetProducer
+    ActivateTriggers --> GetTracingSession
+    ActivateTriggers --> MaybeLogTriggerEvent
+    ActivateTriggers --> MaybeLogUploadEvent
+    ActivateTriggers --> MaybeSnapshotClocksIntoRingBuffer
+    ActivateTriggers --> PurgeExpiredAndCountTriggerInWindow
+    ActivateTriggers --> StartTracing
+
+    FlushAndDisableTracing --> DisableTracing
+    FlushAndDisableTracing --> Flush
+    FlushAndDisableTracing --> FreeBuffers
+    FlushAndDisableTracing --> GetTracingSession
+
+    OnStartTriggersTimeout --> DisableTracing
+    OnStartTriggersTimeout --> GetTracingSession
+
+    StopOnDurationMsExpiry --> FlushAndDisableTracing
+    StopOnDurationMsExpiry --> GetTracingSession
+
+    classDef entry fill:#ff6b6b,stroke:#c0392b,color:#000
+    classDef action fill:#4ecdc4,stroke:#1abc9c,color:#000
+    classDef timeout fill:#aa96da,stroke:#9b59b6,color:#000
+    classDef helper fill:#95e1d3,stroke:#27ae60,color:#000
+
+    class ActivateTriggers entry
+    class StartTracing,FlushAndDisableTracing,DisableTracing,Flush,FreeBuffers action
+    class OnStartTriggersTimeout,StopOnDurationMsExpiry timeout
+    class GetTracingSession,GetProducer,PurgeExpiredAndCountTriggerInWindow,MaybeSnapshotClocksIntoRingBuffer,MaybeLogTriggerEvent,MaybeLogUploadEvent helper`
+        };
+
+        let currentView = 'full';
+        let renderedViews = new Set();
+
+        mermaid.initialize({
+            startOnLoad: false,
+            theme: 'dark',
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                curve: 'basis'
+            },
+            securityLevel: 'loose'
+        });
+
+        async function renderDiagram(view) {
+            if (renderedViews.has(view)) return;
+
+            const container = document.getElementById(`diagram-${view}`);
+            const { svg } = await mermaid.render(`mermaid-${view}`, diagrams[view]);
+            container.innerHTML = svg;
+            renderedViews.add(view);
+        }
+
+        async function showView(view) {
+            // Hide all containers
+            document.querySelectorAll('.diagram-container').forEach(el => el.classList.add('hidden'));
+
+            // Update buttons
+            document.querySelectorAll('.controls button').forEach(btn => btn.classList.remove('active'));
+
+            // Render if needed and show
+            await renderDiagram(view);
+            document.getElementById(`container-${view}`).classList.remove('hidden');
+            document.getElementById(`btn-${view}`).classList.add('active');
+            currentView = view;
+        }
+
+        function filterDiagram() {
+            const search = document.getElementById('search').value.toLowerCase();
+            const svgs = document.querySelectorAll('.diagram-wrapper svg');
+
+            svgs.forEach(svg => {
+                const nodes = svg.querySelectorAll('.node');
+                nodes.forEach(node => {
+                    const text = node.textContent.toLowerCase();
+                    if (search && !text.includes(search)) {
+                        node.style.opacity = '0.2';
+                    } else {
+                        node.style.opacity = '1';
+                    }
+                });
+            });
+        }
+
+        // Initial render
+        renderDiagram('full');
+    </script>
+</body>
+</html>
